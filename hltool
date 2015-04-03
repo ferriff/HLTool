@@ -1,0 +1,160 @@
+#!/usr/bin/env python
+
+# federico dot ferri at cern dot ch - 03.04.2015
+
+import sys
+from optparse import OptionParser
+
+descr = """Print HLT sequences and modules used by a given HLT path,
+with optionable expansion of their configuration parameters.
+The HLT config dump can be obtained as per instructions in https://cern.ch/go/T6Wc ."""
+
+parser = OptionParser(usage = '%prog [options] <HLT config dump>', version = 'v0.1', description = descr)
+parser.add_option('-p', '--path', dest = 'path', default = "", help = 'only expand path containing the string PATH (exclusive with -s) [default: %default]')
+parser.add_option('-l', '--list', dest = 'ls', action = 'store_true', default = False, help = 'only list paths and do not expand them [default: %default]')
+parser.add_option('-s', '--seq', dest = 'seq', default = "none", help = 'only expand sequence SEQ (exclusive with -p) [default: %default]')
+parser.add_option('-m', '--module', dest = 'mod', default = "none", help = 'only print configuration for module MOD (implies -c) [default: %default]')
+parser.add_option('-c', '--cfg', dest = 'cfg', action = 'store_true', default = False, help = 'also print module configurations [default: %default]')
+parser.add_option('-i', '--ind', dest = 'ind', default = "    ", help = 'indentation string [default: `%default\']')
+
+(options, args) = parser.parse_args()
+
+pcfg  = options.cfg
+pmod  = options.mod
+pseq  = options.seq
+ppath = options.path
+pind  = options.ind
+plist = options.ls
+
+if ppath != "" and pseq != "none":
+    print "Error: option -p/--path and -s/--seq are mutually exclusive. See help."
+    sys.exit(1)
+
+paths, sequences, configs = {}, {}, {}
+
+def load_file(f):
+    v = []
+    for l in open(f):
+        v.append(l.rstrip("\n"))
+    return v
+
+def idx(lines, obj,  pattern = ""):
+    v = []
+    for i, el in enumerate(lines):
+        if obj in el and pattern in el:
+            v.append(i)
+    return v
+
+def paths_idx(v, s = ""):
+    return idx(v, "cms.Path", s)
+
+def sequences_idx(v, s = ""):
+    return idx(v, "cms.Sequence", s)
+
+def name(line):
+    return line.replace("process.", "").split(" = ")[0]
+
+def sequence_name(line):
+    return line.replace("process.", "").split(" = ")[0]
+
+def path_name(line):
+    return line.replace("process.", "").split(" = ")[0]
+    
+def obj_modules(line, obj):
+    v = []
+    for el in line.replace(obj, "").replace("process.", "").split(" = ")[1].split(" + "):
+        if "cms.ignore" in el:
+            v.append(el)
+        else:
+            v.append(el.strip("() "))
+    return v
+
+def path_modules(line):
+    return obj_modules(line, "cms.Path")
+
+def sequence_modules(line):
+    return obj_modules(line, "cms.Sequence")
+
+def module_config(v, m):
+    p, found = False, False
+    configs[m] = []
+    for l in v:
+        if "process" in l and "\"" in l and m in l:
+            p = True
+            found = True
+        if l == ")" and p:
+            configs[m].append(l)
+            p = False
+        if p:
+            configs[m].append(l)
+    if not found:
+        configs.pop(m)
+
+def parse_configs(v):
+    vm = []
+    for it in paths.values():
+        vm.extend(it)
+    for it in sequences.values():
+        vm.extend(it)
+    for m in vm:
+        module_config(v, m)
+
+def parse(v):
+    iseq = sequences_idx(v)
+    for i in iseq:
+        sequences[path_name(v[i])] = sequence_modules(v[i])
+    ip = paths_idx(v)
+    for i in ip:
+        paths[path_name(v[i])] = path_modules(v[i])
+
+
+def print_config(m, pre = ""):
+    if configs.has_key(m):
+        for el in configs[m]:
+            print pre, el
+
+def print_seq(s, tind, cfg=False):
+    print tind, s
+    if not sequences.has_key(s):
+        if cfg and configs.has_key(s):
+            print_config(s, tind + pind)
+        return
+    else:
+        for el in sequences[s]:
+            print_seq(el, tind + pind, cfg)
+
+vf = load_file("hlt.py")
+parse(vf)
+parse_configs(vf)
+
+if pseq != "none":
+    if pseq in sequences.keys():
+        print_seq(pseq, "", pcfg)
+        sys.exit(0)
+    else:
+        print "Sequence `%s' not found." % pseq
+        sys.exit(3)
+
+if pmod != "none":
+    if pmod in configs.keys():
+        print_config(pmod)
+        sys.exit(0)
+    else:
+        print "Module `%s' not found." % pmod
+        sys.exit(2)
+
+found = False
+for key, item in paths.iteritems():
+    if ppath not in key:
+        continue
+    print key
+    found = True
+    if plist:
+        continue
+    for m in item:
+        print_seq(m, pind, pcfg)
+    print
+
+if not found:
+    print "No path found containing `%s'." % ppath
+    sys.exit(2)
