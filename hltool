@@ -123,7 +123,10 @@ def print_seq(s, tind, cfg=False):
         for el in sequences[s]:
             print_seq(el, tind + pind, cfg)
 
-vf = load_file("hlt.py")
+if len(args) < 1:
+    parser.error("<HLT config dump> not given.")
+
+vf = load_file(args[0])
 parse(vf)
 parse_configs(vf)
 
